@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>ポコのぼうけん</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;touch-action:none}
+body{overflow:hidden;background:#6cf;font-family:"Hiragino Maru Gothic ProN","Arial Rounded MT Bold",sans-serif}
+#hud{position:fixed;top:10px;left:0;right:0;display:flex;justify-content:space-around;color:#fff;font-size:20px;font-weight:bold;text-shadow:2px 2px 0 #000;pointer-events:none}
+.ov{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;text-align:center;background:rgba(0,30,80,.45);text-shadow:3px 3px 0 #000;cursor:pointer}
+.ov h1{font-size:clamp(36px,8vw,72px);color:#ffd84a;margin-bottom:12px}
+.ov p{font-size:clamp(14px,3vw,20px);margin:6px}
+.blink{animation:b 1s infinite}@keyframes b{50%{opacity:.3}}
+.hide{display:none}
+#touch{position:fixed;bottom:20px;left:0;right:0;display:flex;justify-content:space-between;padding:0 20px;pointer-events:none}
+#touch div{pointer-events:auto;width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,.35);border:3px solid rgba(255,255,255,.7);color:#fff;font-size:30px;display:flex;align-items:center;justify-content:center;margin-right:10px}
+#jb{width:90px!important;height:90px!important;background:rgba(255,120,80,.5)!important}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud"><span id="hs">SCORE 0</span><span id="hc">🪙 0</span><span id="hw">WORLD 1</span><span id="hl">❤ 3</span></div>
+<div id="title" class="ov"><h1>ポコのぼうけん</h1><p>← → / A D：移動　スペース / ↑ / W：ジャンプ</p><p>敵は上から踏んで倒そう！「？」ブロックは下から叩こう</p><p>ゴールの旗をめざせ！</p><p class="blink" style="margin-top:24px">クリック / タップでスタート</p></div>
+<div id="msg" class="ov hide"><h1 id="mt"></h1><p id="ms"></p><p class="blink" style="margin-top:24px">クリック / タップで続ける</p></div>
+<div id="touch"><div style="display:flex;background:none;border:none;width:auto"><div id="lb">◀</div><div id="rb">▶</div></div><div id="jb">⤒</div></div>
+<script type="module">
+import * as THREE from 'three';
+const $=id=>document.getElementById(id);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x6ec8ff);scene.fog=new THREE.Fog(0x6ec8ff,25,60);
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.1,200);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+scene.add(new THREE.HemisphereLight(0xffffff,0x88aa66,1.2));
+const sun=new THREE.DirectionalLight(0xffffff,2);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-20,right:20,top:15,bottom:-10,near:1,far:60});
+scene.add(sun,sun.target);
+
+// テクスチャ生成
+function tex(fn){const c=document.createElement('canvas');c.width=c.height=64;fn(c.getContext('2d'));const t=new THREE.CanvasTexture(c);t.magFilter=THREE.NearestFilter;t.colorSpace=THREE.SRGBColorSpace;return t}
+const brickT=tex(g=>{g.fillStyle='#c8642e';g.fillRect(0,0,64,64);g.fillStyle='#6b2a10';for(let y=0;y<4;y++){g.fillRect(0,y*16,64,2);const o=y%2?16:0;for(let x=o;x<64;x+=32)g.fillRect(x,y*16,2,16)}});
+const qT=tex(g=>{g.fillStyle='#ffc22e';g.fillRect(0,0,64,64);g.strokeStyle='#a0600a';g.lineWidth=4;g.strokeRect(2,2,60,60);g.fillStyle='#fff';g.font='bold 44px sans-serif';g.textAlign='center';g.fillText('?',32,48);g.fillStyle='#a0600a';[[8,8],[56,8],[8,56],[56,56]].forEach(p=>g.fillRect(p[0]-2,p[1]-2,4,4))});
+const usedT=tex(g=>{g.fillStyle='#9a7b55';g.fillRect(0,0,64,64);g.strokeStyle='#5b4228';g.lineWidth=4;g.strokeRect(2,2,60,60)});
+const dirtT=tex(g=>{g.fillStyle='#a8683a';g.fillRect(0,0,64,64);g.fillStyle='#8a5028';for(let i=0;i<14;i++)g.fillRect(Math.random()*60,Math.random()*60,5,5)});
+const sideT=tex(g=>{g.drawImage(dirtT.image,0,0);g.fillStyle='#4cc84a';g.fillRect(0,0,64,16);g.fillStyle='#2e9a30';for(let x=0;x<64;x+=8)g.fillRect(x,14,4,6)});
+const grassT=tex(g=>{g.fillStyle='#4cc84a';g.fillRect(0,0,64,64);g.fillStyle='#62dc5c';for(let i=0;i<12;i++)g.fillRect(Math.random()*60,Math.random()*60,4,4)});
+const M=(o)=>new THREE.MeshStandardMaterial(Object.assign({roughness:.8},o));
+const mats={
+  ground:[M({map:sideT}),M({map:sideT}),M({map:grassT}),M({map:dirtT}),M({map:sideT}),M({map:sideT})],
+  dirt:M({map:dirtT}),brick:M({map:brickT}),q:M({map:qT,emissive:0x442200,emissiveIntensity:.4}),used:M({map:usedT}),
+  pipe:M({color:0x2ecc40,roughness:.4}),stone:M({color:0x9c8a7a})
+};
+const boxG=new THREE.BoxGeometry(1,1,1);
+const coinG=new THREE.CylinderGeometry(.3,.3,.08,20);coinG.rotateX(Math.PI/2);
+const coinM=M({color:0xffd700,metalness:.8,roughness:.2,emissive:0x664400});
+
+// 背景
+const bg=new THREE.Group();scene.add(bg);
+const cloudM=M({color:0xffffff,emissive:0x777777}),hillM=M({color:0x3fae4a}),sph=new THREE.SphereGeometry(1,16,12);
+for(let i=0;i<40;i++){
+  const c=new THREE.Group();for(let j=0;j<3;j++){const s=new THREE.Mesh(sph,cloudM);s.position.set(j*1.2-1.2,j==1?.4:0,0);s.scale.setScalar(j==1?1.3:1);c.add(s)}
+  c.position.set(i*12+Math.random()*6,9+Math.random()*4,-18-Math.random()*8);bg.add(c);
+  const h=new THREE.Mesh(sph,hillM);h.scale.set(5+Math.random()*4,4+Math.random()*4,3);h.position.set(i*10+Math.random()*5,-1,-14);bg.add(h);
+}
+
+// レベル
+let level=new THREE.Group();scene.add(level);
+const tiles=new Map(),key=(x,y)=>x+','+y;
+let coins=[],enemies=[],flagX=0,levelLen=0,checkpoint=2;
+function setTile(x,y,t){
+  const m=new THREE.Mesh(boxG,mats[t]);m.position.set(x,y,0);m.castShadow=m.receiveShadow=true;
+  if(t=='pipe'){m.scale.set(1.2,1,1.2)}
+  level.add(m);tiles.set(key(x,y),{t,m,bump:0});
+}
+const solid=(x,y)=>tiles.has(key(x,y));
+function addCoin(x,y){const m=new THREE.Mesh(coinG,coinM);m.position.set(x,y,0);m.castShadow=true;level.add(m);coins.push(m)}
+const enBodyM=M({color:0x9b4de0,roughness:.3}),eyeW=M({color:0xffffff}),eyeB=M({color:0x111111});
+function addEnemy(x,y){
+  const g=new THREE.Group(),b=new THREE.Mesh(sph,enBodyM);b.scale.set(.45,.38,.4);b.position.y=-.05;b.castShadow=true;g.add(b);
+  for(const s of[-1,1]){const e=new THREE.Mesh(sph,eyeW);e.scale.setScalar(.11);e.position.set(-.18,.05,s*.15+.2);g.add(e);const p=new THREE.Mesh(sph,eyeB);p.scale.setScalar(.06);p.position.set(-.26,.05,s*.15+.22);g.add(p)}
+  g.position.set(x,y,0);level.add(g);enemies.push({m:g,x,y,vx:-2,vy:0,w:.4,h:.35,alive:true,dead:0});
+}
+function buildLevel(lv){
+  scene.remove(level);level=new THREE.Group();scene.add(level);tiles.clear();coins=[];enemies=[];
+  const R=Math.random,len=levelLen=90+lv*20;let lastGap=0;const ground=[];
+  for(let x=-6;x<len+8;x++){
+    if(x>12&&x<len-16&&x-lastGap>5&&R()<.07+lv*.015){const w=2+(R()<.3+lv*.05?1:0);lastGap=x+w;x+=w-1;continue}
+    ground[x]=1;setTile(x,0,'ground');setTile(x,-1,'dirt');
+  }
+  for(let x=10;x<len-16;x++){
+    if(!ground[x])continue;const r=R();
+    if(r<.06&&ground[x+1]){const h=1+(R()*2|0)+1;for(let y=1;y<=h;y++)setTile(x,y,'pipe');x+=3}
+    else if(r<.13){const n=3+(R()*3|0);for(let i=0;i<n;i++)setTile(x+i,4,R()<.35?'q':'brick');if(R()<.5)for(let i=0;i<n;i++)addCoin(x+i,6);x+=n+1}
+    else if(r<.19){for(let i=0;i<4;i++)addCoin(x+i,2+Math.sin(i/3*Math.PI)*1.2);x+=4}
+    else if(r<.27+lv*.02&&x>14)addEnemy(x,1);
+  }
+  for(let i=0;i<5;i++)for(let y=1;y<=i+1;y++)setTile(len-13+i,y,'stone');
+  flagX=len-4;
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,8),M({color:0xeeeeee,metalness:.6}));pole.position.set(flagX,4.5,0);pole.castShadow=true;level.add(pole);
+  const ball=new THREE.Mesh(sph,coinM);ball.scale.setScalar(.25);ball.position.set(flagX,8.6,0);level.add(ball);
+  const flag=new THREE.Mesh(new THREE.PlaneGeometry(1.4,.9),M({color:0xff4060,side:THREE.DoubleSide}));flag.position.set(flagX-.75,7.9,0);level.add(flag);level.userData.flag=flag;
+  const castle=new THREE.Mesh(new THREE.BoxGeometry(4,4,3),mats.brick);castle.position.set(flagX+5,2.5,-1);castle.castShadow=true;level.add(castle);
+  checkpoint=2;
+}
+
+// プレイヤー
+const P={x:2,y:2,vx:0,vy:0,w:.36,h:.45,onGround:false,coyote:0,inv:0,face:1};
+const pm=new THREE.Group();scene.add(pm);
+{const body=new THREE.Mesh(sph,M({color:0xff8a3d,roughness:.4}));body.scale.set(.42,.45,.4);body.castShadow=true;pm.add(body);
+const belly=new THREE.Mesh(sph,M({color:0xfff0d0}));belly.scale.set(.25,.28,.2);belly.position.set(.22,-.08,0);pm.add(belly);
+for(const s of[-1,1]){const e=new THREE.Mesh(sph,eyeW);e.scale.setScalar(.1);e.position.set(.3,.12,s*.13);pm.add(e);const p=new THREE.Mesh(sph,eyeB);p.scale.setScalar(.055);p.position.set(.38,.12,s*.13);pm.add(p);
+ const ear=new THREE.Mesh(new THREE.ConeGeometry(.12,.3,8),M({color:0xff8a3d}));ear.position.set(-.05,.48,s*.2);ear.castShadow=true;pm.add(ear)}
+const hat=new THREE.Mesh(new THREE.CylinderGeometry(.3,.32,.15,16),M({color:0x2d6bff}));hat.position.y=.4;pm.add(hat);}
+
+// 移動と衝突
+function move(e,dt){
+  let hitWall=false,head=null;e.onGround=false;
+  e.x+=e.vx*dt;
+  for(let ty=Math.round(e.y-e.h+.01);ty<=Math.round(e.y+e.h-.01);ty++)for(let tx=Math.round(e.x-e.w+.01);tx<=Math.round(e.x+e.w-.01);tx++)
+    if(solid(tx,ty)){e.x=e.vx>0?tx-.5-e.w:tx+.5+e.w;hitWall=true}
+  e.vy=Math.max(e.vy-42*dt,-20);e.y+=e.vy*dt;
+  for(let tx=Math.round(e.x-e.w+.01);tx<=Math.round(e.x+e.w-.01);tx++)for(let ty=Math.round(e.y-e.h+.01);ty<=Math.round(e.y+e.h-.01);ty++)
+    if(solid(tx,ty)){
+      if(e.vy<=0){e.y=ty+.5+e.h;e.onGround=true}
+      else{e.y=ty-.5-e.h;if(!head||Math.abs(tx-e.x)<Math.abs(head[0]-e.x))head=[tx,ty]}
+      e.vy=0;
+    }
+  return{hitWall,head};
+}
+
+// パーティクル
+const parts=[],partG=new THREE.BoxGeometry(.15,.15,.15);
+for(let i=0;i<120;i++){const m=new THREE.Mesh(partG,M({color:0xffffff}));m.visible=false;scene.add(m);parts.push({m,life:0,v:new THREE.Vector3()})}
+function burst(x,y,color,n=12,sp=6){
+  for(let i=0;i<n;i++){const p=parts.find(p=>p.life<=0);if(!p)return;p.life=.6+Math.random()*.4;p.m.visible=true;p.m.material.color.set(color);p.m.position.set(x,y,0);p.v.set((Math.random()-.5)*sp,Math.random()*sp,(Math.random()-.5)*sp)}
+}
+
+// 音
+let ac;
+function beep(f1,f2,d,type='square',v=.08,delay=0){
+  if(!ac)return;const t=ac.currentTime+delay,o=ac.createOscillator(),g=ac.createGain();o.type=type;
+  o.frequency.setValueAtTime(f1,t);o.frequency.exponentialRampToValueAtTime(f2,t+d);
+  g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g).connect(ac.destination);o.start(t);o.stop(t+d);
+}
+const sfx={jump:()=>beep(280,640,.18),coin:()=>{beep(988,988,.08);beep(1319,1319,.25,'square',.08,.08)},
+stomp:()=>beep(300,60,.2,'triangle',.2),hurt:()=>beep(500,80,.5,'sawtooth',.1),brk:()=>beep(160,40,.15,'square',.12),
+bump:()=>beep(120,90,.08,'triangle',.15),clear:()=>[523,659,784,1047].forEach((f,i)=>beep(f,f,.3,'square',.08,i*.12))};
+
+// 入力
+const input={l:false,r:false,j:false};let jumpPressed=false;
+const km={ArrowLeft:'l',KeyA:'l',ArrowRight:'r',KeyD:'r',Space:'j',ArrowUp:'j',KeyW:'j',KeyZ:'j'};
+addEventListener('keydown',e=>{const k=km[e.code];if(k){e.preventDefault();if(k=='j'&&!input.j)jumpPressed=true;input[k]=true}if((e.code=='Space'||e.code=='Enter')&&state!='play')advance()});
+addEventListener('keyup',e=>{const k=km[e.code];if(k)input[k]=false});
+for(const[id,k]of[['lb','l'],['rb','r'],['jb','j']]){const b=$(id);
+  b.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();initAudio();if(k=='j')jumpPressed=true;input[k]=true});
+  for(const ev of['pointerup','pointerleave','pointercancel'])b.addEventListener(ev,()=>input[k]=false)}
+function initAudio(){if(!ac)ac=new(window.AudioContext||window.webkitAudioContext)();if(ac.state=='suspended')ac.resume()}
+
+// ゲーム状態
+let state='title',score=0,coinN=0,lives=3,world=1,hi=0;
+function hud(){$('hs').textContent='SCORE '+score;$('hc').textContent='🪙 '+coinN;$('hw').textContent='WORLD '+world;$('hl').textContent='❤ '+lives}
+function respawn(){let x=checkpoint;while(!solid(x,0))x++;Object.assign(P,{x,y:2,vx:0,vy:0,inv:1.5})}
+function showMsg(t,s){$('mt').textContent=t;$('ms').innerHTML=s;$('msg').classList.remove('hide')}
+function startGame(){score=0;coinN=0;lives=3;world=1;buildLevel(world);respawn();P.inv=0;state='play';hud()}
+function advance(){
+  initAudio();
+  if(state=='title'){$('title').classList.add('hide');startGame()}
+  else if(state=='over'){$('msg').classList.add('hide');startGame()}
+  else if(state=='clear'){$('msg').classList.add('hide');world++;buildLevel(world);respawn();P.inv=0;state='play';hud()}
+}
+$('title').addEventListener('pointerdown',advance);$('msg').addEventListener('pointerdown',advance);
+function addScore(n){score+=n;hud()}
+function getCoin(x,y){coinN++;addScore(100);sfx.coin();burst(x,y,0xffd700,8,4);if(coinN%50==0){lives++;hud()}}
+function hitBlock(tx,ty){
+  const t=tiles.get(key(tx,ty));t.bump=.15;
+  if(t.t=='q'){t.t='used';t.m.material=mats.used;
+    const c=new THREE.Mesh(coinG,coinM);c.position.set(tx,ty+1,0);scene.add(c);popCoins.push({m:c,t:.5});getCoin(tx,ty+1)}
+  else if(t.t=='brick'){level.remove(t.m);tiles.delete(key(tx,ty));burst(tx,ty,0xc8642e,14,7);sfx.brk();addScore(50)}
+  else sfx.bump();
+  for(const e of enemies)if(e.alive&&Math.abs(e.x-tx)<.8&&Math.abs(e.y-(ty+.85))<.4)killEnemy(e,true);
+}
+const popCoins=[];
+function killEnemy(e,flip){e.alive=false;e.dead=1;addScore(200);sfx.stomp();burst(e.x,e.y,0xb070ff,10,5);if(flip)e.m.rotation.x=Math.PI}
+function hurt(){
+  if(P.inv>0)return;lives--;hud();sfx.hurt();burst(P.x,P.y,0xff8a3d,20,8);
+  if(lives<=0){state='over';hi=Math.max(hi,score);showMsg('GAME OVER',`SCORE ${score}<br>HIGH SCORE ${hi}`)}
+  else respawn();
+}
+
+// ループ
+const clock=new THREE.Clock();let camX=2,time=0;
+function update(dt){
+  time+=dt;
+  if(state=='play'){
+    const dir=(input.r?1:0)-(input.l?1:0),acc=P.onGround?40:25;
+    if(dir){P.vx+=dir*acc*dt;P.face=dir}else P.vx*=Math.pow(P.onGround?.0005:.2,dt);
+    P.vx=THREE.MathUtils.clamp(P.vx,-7.5,7.5);
+    P.coyote=P.onGround?.1:P.coyote-dt;
+    if(jumpPressed&&P.coyote>0){P.vy=15.5;P.coyote=0;sfx.jump();burst(P.x,P.y-.4,0xffffff,5,2)}
+    if(!input.j&&P.vy>0)P.vy*=Math.pow(.002,dt);
+    const r=move(P,dt);if(r.head)hitBlock(r.head[0],r.head[1]);
+    if(P.x<camX-12){P.x=camX-12;P.vx=0}
+    if(P.x>levelLen/2&&checkpoint<levelLen/2)checkpoint=Math.floor(levelLen/2);
+    P.inv-=dt;
+    if(P.y<-6)hurt();
+    for(let i=coins.length-1;i>=0;i--){const c=coins[i];if(Math.abs(c.position.x-P.x)<.7&&Math.abs(c.position.y-P.y)<.8){level.remove(c);coins.splice(i,1);getCoin(c.position.x,c.position.y)}}
+    if(P.x>=flagX-.3){state='clear';const b=Math.max(100,Math.round(P.y*500));addScore(b);sfx.clear();burst(flagX,P.y,0xff4060,30,10);
+      showMsg('COURSE CLEAR!',`旗ボーナス +${b}<br>次は WORLD ${world+1}`)}
+  }
+  jumpPressed=false;
+  for(const e of enemies){
+    if(e.dead>0){e.dead-=dt;e.m.scale.y=Math.max(.05,e.dead);if(e.dead<=0)e.m.visible=false;continue}
+    if(!e.alive||Math.abs(e.x-P.x)>22)continue;
+    const r=move(e,dt);if(r.hitWall)e.vx*=-1;
+    if(e.y<-6){e.alive=false;e.m.visible=false}
+    e.m.position.set(e.x,e.y,0);e.m.rotation.y=e.vx>0?Math.PI:0;e.m.scale.set(1,1+Math.sin(time*12)*.1,1);
+    if(state=='play'&&Math.abs(e.x-P.x)<.72&&Math.abs(e.y-P.y)<.78){
+      if(P.vy<0&&P.y>e.y+.3){killEnemy(e);P.vy=input.j?15:10}else hurt();
+    }
+  }
+  for(const c of coins)c.rotation.y+=dt*3;
+  for(let i=popCoins.length-1;i>=0;i--){const c=popCoins[i];c.t-=dt;c.m.position.y+=dt*6;c.m.rotation.y+=dt*20;if(c.t<=0){scene.remove(c.m);popCoins.splice(i,1)}}
+  for(const t of tiles.values())if(t.bump>0){t.bump-=dt;t.m.position.y=Math.round(t.m.position.y-.01)+Math.sin(Math.max(t.bump,0)/.15*Math.PI)*.3}
+  for(const p of parts)if(p.life>0){p.life-=dt;p.v.y-=20*dt;p.m.position.addScaledVector(p.v,dt);p.m.rotation.x+=dt*8;p.m.scale.setScalar(Math.max(p.life,0)*1.5);if(p.life<=0)p.m.visible=false}
+  if(level.userData.flag)level.userData.flag.rotation.y=Math.sin(time*3)*.3;
+  // プレイヤー表示
+  pm.position.set(P.x,P.y,0);
+  pm.rotation.y=THREE.MathUtils.lerp(pm.rotation.y,P.face>0?0:Math.PI,.25);
+  const sq=P.onGround?1+Math.sin(time*20)*Math.min(Math.abs(P.vx)/7,1)*.08:1+THREE.MathUtils.clamp(P.vy/30,-.15,.2);
+  pm.scale.set(1/Math.sqrt(sq),sq,1/Math.sqrt(sq));
+  pm.visible=state=='title'||P.inv<=0||Math.floor(time*15)%2==0;
+  // カメラ
+  camX=Math.max(camX,THREE.MathUtils.lerp(camX,P.x+2,.08));
+  if(state=='title'){camX=2+Math.sin(time*.3)*2}
+  camera.position.set(camX,4.5+Math.max(0,P.y-4)*.5,15);camera.lookAt(camX,3+Math.max(0,P.y-4)*.5,0);
+  bg.position.x=camX*.6;
+  sun.position.set(camX+8,20,12);sun.target.position.set(camX,0,0);
+}
+buildLevel(1);P.y=1;
+renderer.setAnimationLoop(()=>{update(Math.min(clock.getDelta(),.033));renderer.render(scene,camera)});
+</script>
+</body>
+</html>
